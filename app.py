@@ -36,21 +36,19 @@ def crear_pago():
     
     # Convertir a centavos (PayPhone trabaja en centavos)
     amount_cents = int(amount_usd * 100)
-    
-    # URL para API Button (pago web con tarjeta)
-    url = "https://pay.payphonetodoesposible.com/api/button/Prepare"
+
+    url = "https://pay.payphonetodoesposible.com/api/Links"
     client_tx_id = f"ASINM-{random.randint(100000, 999999)}"
 
     payload = {
-        "amount": amount_cents,           
+        "amount": amount_cents,
         "amountWithoutTax": amount_cents,
         "amountWithTax": 0,
         "tax": 0,
         "currency": "USD",
         "clientTransactionId": client_tx_id,
         "reference": data.get('reference', f'Membresía ASINM ${amount_usd:.2f}'),
-        "email": data.get('email', ''),  # Email opcional
-        "phoneNumber": data.get('phoneNumber', '')  # Teléfono opcional
+        "expireIn": 60
     }
 
     headers = {
@@ -60,57 +58,28 @@ def crear_pago():
 
     try:
         response = requests.post(url, json=payload, headers=headers)
-        
         if response.status_code == 200:
-            response_data = response.json()
-            
-            # La respuesta contiene el payWithCard URL (link para pagar con tarjeta en web)
-            payment_url = response_data.get('payWithCard', '')
-            
-            if not payment_url:
-                return jsonify({"error": "No se recibió URL de pago"}), 400
-            
+            data = response.json() if response.headers.get('Content-Type') == 'application/json' else response.text
+            link = ""
+            if isinstance(data, str):
+                link = data.strip('"')
+            elif isinstance(data, dict):
+                link = data.get('payWithCard') or data.get('url')
+
             return jsonify({
                 "success": True,
-                "message": "Link de pago generado",
-                "payment_url": payment_url,
-                "transaction_id": response_data.get('transactionId', client_tx_id),
-                "client_transaction_id": client_tx_id,
+                "message": "Link generado",
+                "payment_url": link,
+                "transaction_id": client_tx_id,
                 "amount": amount_usd
             })
         else:
-            error_data = response.json() if response.headers.get('Content-Type') == 'application/json' else response.text
-            return jsonify({
-                "error": "PayPhone rechazó la solicitud", 
-                "detalle": error_data
-            }), 400
+            return jsonify({"error": "PayPhone rechazó la solicitud", "detalle": response.text}), 400
 
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-# Endpoint para consultar estado de transacción
-@app.route('/consultar-pago/<transaction_id>', methods=['GET'])
-def consultar_pago(transaction_id):
-    if not TOKEN:
-        return jsonify({"error": "Falta configurar el TOKEN"}), 500
-    
-    url = f"https://pay.payphonetodoesposible.com/api/button/{transaction_id}"
-    
-    headers = {
-        "Authorization": f"Bearer {TOKEN}",
-        "Content-Type": "application/json"
-    }
-    
-    try:
-        response = requests.get(url, headers=headers)
-        
-        if response.status_code == 200:
-            return jsonify(response.json())
-        else:
-            return jsonify({"error": "No se pudo consultar la transacción"}), 400
-            
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
     app.run(debug=True)
+
+
