@@ -8,7 +8,6 @@ app = Flask(__name__)
 CORS(app)
 
 TOKEN = os.environ.get("PAYPHONE_TOKEN", "")
-STORE_ID = os.environ.get("PAYPHONE_STORE_ID", "")  # Agregar StoreID
 
 @app.route('/', methods=['GET'])
 def home():
@@ -18,21 +17,12 @@ def home():
 def crear_pago():
     if not TOKEN:
         return jsonify({"error": "Falta configurar el TOKEN en Render"}), 500
-    
-    if not STORE_ID:
-        return jsonify({"error": "Falta configurar el STORE_ID en Render"}), 500
 
     # Recibir datos del frontend
     data = request.get_json()
     
-    # Obtener el monto en dólares
+    # Obtener el monto en dólares (por defecto 1.00)
     amount_usd = data.get('amount', 1.00)
-    phone_number = data.get('phoneNumber', '')
-    country_code = data.get('countryCode', '593')
-    
-    # Validar teléfono
-    if not phone_number:
-        return jsonify({"error": "Número de teléfono requerido"}), 400
     
     # Validar monto
     try:
@@ -44,25 +34,23 @@ def crear_pago():
     except (ValueError, TypeError):
         return jsonify({"error": "Monto inválido"}), 400
     
-    # IMPORTANTE: Convertir a centavos (PayPhone requiere centavos)
+    # Convertir a centavos (PayPhone trabaja en centavos)
     amount_cents = int(amount_usd * 100)
     
-    # URL para API Sale (cobro directo a la app)
-    url = "https://pay.payphonetodoesposible.com/api/Sale"
+    # URL para API Button (pago web con tarjeta)
+    url = "https://pay.payphonetodoesposible.com/api/button/Prepare"
     client_tx_id = f"ASINM-{random.randint(100000, 999999)}"
 
-    # Payload según documentación PayPhone API Sale
     payload = {
-        "phoneNumber": phone_number,
-        "countryCode": country_code,
-        "amount": amount_cents,           # Monto total en centavos
-        "amountWithoutTax": amount_cents, # Sin impuestos
+        "amount": amount_cents,           
+        "amountWithoutTax": amount_cents,
         "amountWithTax": 0,
         "tax": 0,
         "currency": "USD",
         "clientTransactionId": client_tx_id,
-        "storeId": STORE_ID,
-        "reference": data.get('reference', f'Pago ASINM ${amount_usd:.2f}')
+        "reference": data.get('reference', f'Membresía ASINM ${amount_usd:.2f}'),
+        "email": data.get('email', ''),  # Email opcional
+        "phoneNumber": data.get('phoneNumber', '')  # Teléfono opcional
     }
 
     headers = {
@@ -76,13 +64,19 @@ def crear_pago():
         if response.status_code == 200:
             response_data = response.json()
             
+            # La respuesta contiene el payWithCard URL (link para pagar con tarjeta en web)
+            payment_url = response_data.get('payWithCard', '')
+            
+            if not payment_url:
+                return jsonify({"error": "No se recibió URL de pago"}), 400
+            
             return jsonify({
                 "success": True,
-                "message": "Solicitud de pago enviada",
-                "transaction_id": response_data.get('transactionId'),
+                "message": "Link de pago generado",
+                "payment_url": payment_url,
+                "transaction_id": response_data.get('transactionId', client_tx_id),
                 "client_transaction_id": client_tx_id,
-                "amount": amount_usd,
-                "phone_number": phone_number
+                "amount": amount_usd
             })
         else:
             error_data = response.json() if response.headers.get('Content-Type') == 'application/json' else response.text
@@ -100,7 +94,7 @@ def consultar_pago(transaction_id):
     if not TOKEN:
         return jsonify({"error": "Falta configurar el TOKEN"}), 500
     
-    url = f"https://pay.payphonetodoesposible.com/api/Sale/{transaction_id}"
+    url = f"https://pay.payphonetodoesposible.com/api/button/{transaction_id}"
     
     headers = {
         "Authorization": f"Bearer {TOKEN}",
